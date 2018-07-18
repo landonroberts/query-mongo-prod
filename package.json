@@ -1,0 +1,9 @@
+{
+  "name": "mongo-queries",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {},
+  "dependencies": {
+    "node-cmd": "^3.0.0"
+  }
+}
