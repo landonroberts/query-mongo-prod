@@ -1,25 +1,116 @@
 const cmd = require('node-cmd');
 const fs = require('fs');
+const prompt = require('prompt');
+const config = fs.existsSync('./config.js') ? require('./config.js') : '';
 
-const bastion = 'ssh landonr@52.55.49.180';
-const mongodb = 'mongo --host mongodb://raterProject:\"theRaterProjectIs4wesome!\"@10.100.16.76:27017/rater-prod';
-const quoteIds = ["364817b147434db2cb89ff55686369e1cdde2ef9b5a1d6da3239444189677fab","ebd5ff13efa543f96421fa0ad30ccbab48ba17199f97accb632076dc0f0300f2","7684cfee4a8376bc8f9a18daa350fe4d1e6d9df42cde97848a9bda7782b75abe"];
+let bastion = config && config.bastion;
+let mongodb = config && config.mongodb;
+const wstream = fs.createWriteStream('./Results/quotes.txt');
 
-const searchString = quoteIds.map(ID => `db.quotes.find({"policy.quoteId": "${ID}"}).pretty() `).join('\n');
 
-const HERECommand = `${mongodb} << HERE\nrs.slaveOk()\n${searchString}\nHERE`;
+let numQuotes;
+let totComplete = 1;
 
-cmd.get(`${bastion} ${HERECommand}`, (err, data, stderr) => {
-  cmd.run("mkdir -p Results");
-  fs.writeFile('./Results/quotes.txt', data, (err) => {
-    if (err){
-      console.log('ERROR', err)
-        return
-    }
-    cmd.run("open ./Results/quotes.txt");
-  });
+wstream.on('finish', () => {
+  console.log('SUCCESS! --> open quotes.txt in the Results directory of this project');
 });
 
+startProgram();
+function startProgram() {
+    prompt.start();
+    if (!bastion || !mongodb) {
+        console.log('Please supply your logins');
+        prompt.get(['bastion', 'mongodb'], (err, inputs) => {
+            fs.writeFile('config.js', `module.exports = {bastion: \'${inputs.bastion}\', mongodb: \'${inputs.mongodb}\'};`, (err, file) => {
+                if (err) console.log('logins not saved! -->', err);
+                bastion = inputs.bastion;
+                mongodb = inputs.mongodb;
+                setTimeout(() => startProgram(), 500);
+            });
+        });
+    } else {
+        console.log('**--- Drag and drop your .txt file below and press Enter ---**')
+        prompt.get(['filePath'], (err, result) => {
+            const fullPath = result.filePath;
+            const commandsToGetFile = `less -FX ~ ${fullPath}`;
+            cmd.get(
+                commandsToGetFile,
+                (err, data, stderr) => {
+                    const quoteIds = data.split('\r').join('').split('\n');
+                    numQuotes = quoteIds.length;
+                    const numBatches = Math.ceil(quoteIds.length / 15);
+                    let batches = [...Array(numBatches)].map((_, i) => {
+                        const sliceIdx = i * 15;
+                        return batchUpQueries(quoteIds.slice(sliceIdx, sliceIdx + 15))
+                    });
 
+                    executePromisesInOrder(0, batches)
+                });
+        });
 
+        const batchUpQueries = (quoteIds) => {
+            let batch = `${mongodb} << HERE\nrs.slaveOk()\n`;
+            quoteIds.forEach(ID => {
+                batch += `db.quotes.find({"policy.quoteId": "${ID}"})\n`
+            });
+            batch += 'HERE';
+            return batch;
+        };
 
+        const executePromisesInOrder = (idx, batches) => {
+            if (idx > batches.length - 1) {
+                wstream.end();
+                return;
+            }
+
+            getQuotesByBatch(batches[idx])
+                .then(results => {
+                    const formattedResults = removeObjectIdAndIsoDates(results).split("\n");
+                    formattedResults.forEach((quotePayload, i) => {
+                        try {
+                            const jsonified = JSON.stringify(JSON.parse(quotePayload), null, 4);
+                            wstream.write(`${jsonified} \n\n *** ============================================= *** \n\n`);
+                            ++totComplete;
+                        } catch (e) {
+                            console.log(e);
+                            console.log('\n\nPARSING FAILED for batch -->', batches[idx][i], '\n\n');
+                        }
+                    });
+                    console.log(`${totComplete} of ${numQuotes} queries complete`);
+                    executePromisesInOrder(idx += 1, batches);
+                })
+                .catch(error => {
+                    console.log("ERROR GETTING QUOTES! --> index", batches[idx], error);
+                    executePromisesInOrder(idx += 1, batches);
+                })
+        };
+
+        const removeObjectIdAndIsoDates = (str) => {
+            const objIdIdx = str.indexOf("ObjectId");
+            const isoIdx = str.indexOf("ISODate");
+            const isObjId = objIdIdx > -1;
+            const sliceIdx = isObjId ? objIdIdx : isoIdx;
+
+            if (objIdIdx === -1 && isoIdx === -1) {
+                return str;
+            }
+
+            const objectIdOrIsoDateMethod = str.slice(sliceIdx, sliceIdx + (isObjId ? 36 : 35));
+            const idOrDateString = objectIdOrIsoDateMethod.slice(objectIdOrIsoDateMethod.indexOf('\"') + 1, objectIdOrIsoDateMethod.indexOf('\"') + 25);
+            const newStr = str.replace(objectIdOrIsoDateMethod, `\"${idOrDateString}\"`);
+            return removeObjectIdAndIsoDates(newStr);
+        };
+
+        const getQuotesByBatch = (queryString) => {
+            return new Promise((resolve, reject) => {
+                cmd.get(`${bastion} ${queryString}`, (err, data, stderr) => {
+                    if (err) {
+                        reject(err);
+                    }
+                    resolve(data.slice(data.indexOf('{'), data.lastIndexOf('}') + 1));
+                });
+            });
+
+        };
+    };
+}
