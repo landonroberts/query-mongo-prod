@@ -23,7 +23,7 @@ function runProgram() {
         console.log('Please supply your logins');
         prompt.get(['bastion_login', 'mongodb_password'], (err, inputs) => {
             bastionLogin = inputs.bastion_login;
-            mongodbHost = `mongo --host mongodb://raterProject:\"${inputs.mongodb_password}\"@10.100.16.76:27017/rater-prod`;
+            mongodbHost = `mongo --host mongodb://raterProject:\"${inputs.mongodb_password}\"@10.100.44.11:27017/rater-prod`;
             fs.writeFile('config.js', `module.exports = {bastionLogin: \'${bastionLogin}\', mongodbHost: \'${mongodbHost}\'};`, (err, file) => {
                 if (err) console.log('logins not saved! -->', err);
                 setTimeout(() => runProgram(), 500);
