@@ -12,7 +12,8 @@ let numQuotes;
 let totComplete = 0;
 
 wstream.on('finish', () => {
-  console.log('SUCCESS! --> open quotes.txt in the Results directory of this project');
+  const message = `${numQuotes - (numQuotes - totComplete)} of ${numQuotes} quotes successfully retrieved!\n\nOpen mongo_queries/Results/quotes.txt to see results.\n\n`
+  console.log(message);
 });
 
 runProgram();
@@ -33,21 +34,19 @@ function runProgram() {
             .then(() => {
                 console.log('\n**--- Drag and drop your .txt file into this terminal and press Enter ---**\n');
                 prompt.get(['filePath'], (err, result) => {
-                    const fullPath = result.filePath;
-                    const commandsToGetFile = `less -FX ~ ${fullPath}`;
-                    cmd.get(
-                        commandsToGetFile,
-                        (err, data, stderr) => {
-                            const quoteIds = data.split('\r').join('').split('\n');
-                            numQuotes = quoteIds.length;
-                            const numBatches = Math.ceil(quoteIds.length / 15);
-                            let batches = [...Array(numBatches)].map((_, i) => {
-                                const sliceIdx = i * 15;
-                                return batchUpQueries(quoteIds.slice(sliceIdx, sliceIdx + 15))
-                            });
-
-                            executeBatchedQueriesInOrder(batches)
-                        });
+                    const fullPath = result.filePath.trim();
+                    fs.readFile(fullPath, (err, data) => {
+                      if (err) console.log("ERROR", err);
+                      const quoteIds = data.toString('utf8').split('\r\n');
+                      console.log('number of quote ids =', quoteIds.length);
+                      numQuotes = quoteIds.length;
+                      const numBatches = Math.ceil(quoteIds.length / 15);
+                      let batches = [...Array(numBatches)].map((_, i) => {
+                        const sliceIdx = i * 15;
+                        return batchUpQueries(quoteIds.slice(sliceIdx, sliceIdx + 15))
+                      });
+                      executeBatchedQueriesInOrder(batches)
+                    });
                 });
             })
             .catch(e => {
@@ -70,9 +69,11 @@ function removeObjectIdAndIsoDates(str) {
         return str;
     }
 
-    const objectIdOrIsoDateMethod = str.slice(sliceIdx, sliceIdx + (isObjId ? 36 : 35));
-    const idOrDateString = objectIdOrIsoDateMethod.slice(objectIdOrIsoDateMethod.indexOf('\"') + 1, objectIdOrIsoDateMethod.indexOf('\"') + 25);
-    const newStr = str.replace(objectIdOrIsoDateMethod, `\"${idOrDateString}\"`);
+    const frontSlice = str.slice(sliceIdx);
+    const objectIdOrIsoDate = frontSlice.slice(0, frontSlice.indexOf(')') + 1);
+    const idOrDateString = objectIdOrIsoDate.slice(objectIdOrIsoDate.indexOf('\"') + 1, objectIdOrIsoDate.indexOf('\")'));
+    const newStr = str.replace(objectIdOrIsoDate, `\"${idOrDateString}\"`);
+
     return removeObjectIdAndIsoDates(newStr);
 }
 
@@ -118,7 +119,7 @@ function executeBatchedQueriesInOrder(batches, idx = 0) {
                     console.log('\n\nPARSING FAILED for -->', batches[idx][i], '\n\n');
                 }
             });
-            console.log(`${totComplete + 1} of ${numQuotes} queries complete`);
+            console.log(`${totComplete} of ${numQuotes} queries executed`);
             executeBatchedQueriesInOrder(batches, ++idx);
         })
         .catch(error => {
